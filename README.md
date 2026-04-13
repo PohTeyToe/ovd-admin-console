@@ -30,7 +30,7 @@ Open [http://localhost:5173](http://localhost:5173) to view the dashboard.
 
 ## Live Demo
 
-[View the live demo](https://PLACEHOLDER)
+[View the live demo](https://inuvika-admin-console.vercel.app)
 
 ## Notes
 
