@@ -229,7 +229,67 @@ export function generateInsights(sessions: Session[]): Insight[] {
     timestamp: ts(30),
   });
 
+  insights.push({
+    id: 'login-pattern',
+    severity: 'info',
+    title: 'Login pattern: 09:00 surge expected',
+    description: `Historical telemetry shows a 42% spike in concurrent sessions between 08:55 and 09:15. Pre-warming ${Math.min(6, Math.max(2, Math.round(sessions.length / 4)))} hosts would cut median login time by 3.1s.`,
+    action: 'Schedule pre-warm',
+    timestamp: ts(18),
+  });
+
+  insights.push({
+    id: 'gpu-candidate',
+    severity: 'info',
+    title: 'GPU acceleration candidates detected',
+    description: `3 sessions show sustained 60%+ CPU on graphics workloads. Migrating ${active.slice(0, 3).map(s => s.user).join(', ') || 'top users'} to vGPU pool would reduce render latency by ~38%.`,
+    action: 'Review vGPU fit',
+    timestamp: ts(22),
+  });
+
+  insights.push({
+    id: 'security-scan',
+    severity: 'warning',
+    title: 'Unusual after-hours connection attempt',
+    description: `2 failed logins from 10.0.4.87 at 03:14 UTC outside normal pattern. Source IP not in trusted range. Recommend enabling step-up MFA for affected accounts.`,
+    action: 'Review audit log',
+    timestamp: ts(45),
+  });
+
   return insights;
+}
+
+// 7-day drill-down history for chart modal
+export interface HistoryPoint {
+  day: string;
+  cpu: number;
+  memory: number;
+  sessions: number;
+  network: number;
+}
+
+export function generateSevenDayHistory(metric: 'cpu' | 'memory'): HistoryPoint[] {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const baseCpu = [48, 62, 71, 58, 69, 34, 28];
+  const baseMem = [55, 64, 72, 66, 74, 48, 42];
+  const baseSessions = [18, 22, 24, 21, 23, 9, 7];
+  const baseNetwork = [340, 420, 510, 460, 495, 220, 180];
+
+  return days.map((d, i) => {
+    const jitter = (Math.random() - 0.5) * 6;
+    return {
+      day: d,
+      cpu: Math.round((baseCpu[i] + jitter) * 10) / 10,
+      memory: Math.round((baseMem[i] + jitter * 0.7) * 10) / 10,
+      sessions: baseSessions[i],
+      network: Math.round(baseNetwork[i] + jitter * 10),
+    };
+  }).map((point) => {
+    // Emphasize the clicked metric with slightly sharper variance
+    if (metric === 'cpu') point.cpu = Math.min(95, point.cpu + 2);
+    if (metric === 'memory') point.memory = Math.min(90, point.memory + 2);
+    return point;
+  });
 }
 
 // Server status data

@@ -1,26 +1,56 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar,
 } from 'recharts';
 import toast, { Toaster } from 'react-hot-toast';
 import {
+  motion, AnimatePresence, useMotionValue, useTransform, animate,
+  type Variants,
+} from 'framer-motion';
+import {
   Monitor, Users, Cpu, MemoryStick, Wifi,
   Power, RotateCcw, MessageSquare, Brain, ChevronRight,
   Server, Activity, Clock, Shield, Zap, AlertTriangle,
-  CheckCircle2, Info, TrendingUp,
+  CheckCircle2, Info, TrendingUp, X, ArrowUpDown, ArrowUp, ArrowDown,
 } from 'lucide-react';
-import type { Session, Insight, ServerNode } from './data';
+import type { Session, Insight, ServerNode, HistoryPoint } from './data';
 import {
   generateSessions, generateMetricsHistory, advanceMetrics,
-  generateInsights, generateServers,
+  generateInsights, generateServers, generateSevenDayHistory,
 } from './data';
+
+// ── Motion Variants ────────────────────────────────────────
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.08, delayChildren: 0.05 },
+  },
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
+  },
+};
+
+const sidebarVariants: Variants = {
+  hidden: { opacity: 0, x: 20 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.15 },
+  },
+};
 
 // ── Loading Skeleton ───────────────────────────────────────
 function DashboardSkeleton() {
   return (
     <div className="min-h-screen bg-gradient-mesh text-slate-300 font-sans">
-      {/* Header skeleton */}
       <header className="header-glass border-b border-slate-800 sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-6 h-14 flex items-center gap-3">
           <div className="skeleton w-8 h-8 rounded-lg" />
@@ -31,7 +61,6 @@ function DashboardSkeleton() {
         </div>
       </header>
       <div className="max-w-[1600px] mx-auto px-6 py-5">
-        {/* Stat card skeletons */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="glass-card border border-slate-800 rounded-xl p-4">
@@ -46,7 +75,6 @@ function DashboardSkeleton() {
             </div>
           ))}
         </div>
-        {/* Chart skeletons */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-5">
           {[...Array(2)].map((_, i) => (
             <div key={i} className="glass-card border border-slate-800 rounded-xl p-4">
@@ -55,7 +83,6 @@ function DashboardSkeleton() {
             </div>
           ))}
         </div>
-        {/* Table skeleton */}
         <div className="glass-card border border-slate-800 rounded-xl p-4">
           <div className="skeleton w-32 h-4 mb-4" />
           {[...Array(6)].map((_, i) => (
@@ -67,21 +94,78 @@ function DashboardSkeleton() {
   );
 }
 
+// ── Animated Stat Value ────────────────────────────────────
+function AnimatedValue({ value, suffix = '', decimals = 0 }: {
+  value: number; suffix?: string; decimals?: number;
+}) {
+  const mv = useMotionValue(0);
+  const rounded = useTransform(mv, (v) =>
+    decimals > 0 ? v.toFixed(decimals) : Math.round(v).toString()
+  );
+  const [display, setDisplay] = useState('0');
+  const [flashing, setFlashing] = useState(false);
+  const prevValue = useRef(0);
+
+  useEffect(() => {
+    const controls = animate(mv, value, {
+      duration: 1.1,
+      ease: [0.22, 1, 0.36, 1],
+    });
+    if (prevValue.current !== 0 && prevValue.current !== value) {
+      setFlashing(true);
+      const t = setTimeout(() => setFlashing(false), 700);
+      prevValue.current = value;
+      return () => {
+        controls.stop();
+        clearTimeout(t);
+      };
+    }
+    prevValue.current = value;
+    return () => controls.stop();
+  }, [value, mv]);
+
+  useEffect(() => {
+    const unsub = rounded.on('change', (v) => setDisplay(v));
+    return unsub;
+  }, [rounded]);
+
+  return (
+    <motion.span
+      animate={{ color: flashing ? '#22d3ee' : '#ffffff' }}
+      transition={{ duration: 0.7 }}
+    >
+      {display}{suffix}
+    </motion.span>
+  );
+}
+
 // ── Stat Card ──────────────────────────────────────────────
-function StatCard({ icon: Icon, label, value, sub, color }: {
-  icon: typeof Cpu; label: string; value: string | number; sub?: string; color: string;
+function StatCard({ icon: Icon, label, numericValue, suffix, decimals, sub, color }: {
+  icon: typeof Cpu;
+  label: string;
+  numericValue: number;
+  suffix?: string;
+  decimals?: number;
+  sub?: string;
+  color: string;
 }) {
   return (
-    <div className="glass-card border border-slate-800 rounded-xl p-4 flex items-start gap-3 card-glow animate-fade-in-up opacity-0">
+    <motion.div
+      variants={itemVariants}
+      whileHover={{ y: -2, transition: { duration: 0.2 } }}
+      className="glass-card border border-slate-800 rounded-xl p-4 flex items-start gap-3 card-glow"
+    >
       <div className={`p-2.5 rounded-lg ${color} shadow-lg`}>
         <Icon size={20} />
       </div>
       <div className="min-w-0">
         <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest">{label}</p>
-        <p className="text-2xl font-bold text-white mt-0.5 tracking-tight flash-update">{value}</p>
+        <p className="text-2xl font-bold text-white mt-0.5 tracking-tight tabular-nums">
+          <AnimatedValue value={numericValue} suffix={suffix} decimals={decimals} />
+        </p>
         {sub && <p className="text-xs text-slate-400 mt-0.5 font-medium">{sub}</p>}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -133,7 +217,7 @@ function InsightCard({ insight, onAction }: { insight: Insight; onAction: () => 
                     insight.severity === 'warning' ? 'hover:shadow-amber-500/5' : 'hover:shadow-blue-500/5';
 
   return (
-    <div className={`glass-card border border-slate-800 border-l-2 ${borderColor} rounded-lg p-3.5 mb-2.5 transition-all duration-300 hover:shadow-lg ${glowColor}`}>
+    <div className={`glass-card border border-slate-800 border-l-2 ${borderColor} rounded-lg p-3.5 transition-all duration-300 hover:shadow-lg ${glowColor}`}>
       <div className="flex items-start gap-2.5">
         <div className="mt-0.5 shrink-0">{icon}</div>
         <div className="min-w-0 flex-1">
@@ -154,6 +238,50 @@ function InsightCard({ insight, onAction }: { insight: Insight; onAction: () => 
   );
 }
 
+// ── Rotating Insights ──────────────────────────────────────
+function RotatingInsights({ insights, onAction }: {
+  insights: Insight[]; onAction: (i: Insight) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const windowSize = 3;
+
+  useEffect(() => {
+    if (insights.length <= windowSize) return;
+    const id = setInterval(() => {
+      setIndex((i) => (i + 1) % insights.length);
+    }, 9000);
+    return () => clearInterval(id);
+  }, [insights.length]);
+
+  const visible = useMemo(() => {
+    if (insights.length <= windowSize) return insights;
+    const out: Insight[] = [];
+    for (let i = 0; i < windowSize; i++) {
+      out.push(insights[(index + i) % insights.length]);
+    }
+    return out;
+  }, [insights, index]);
+
+  return (
+    <div className="space-y-2.5 relative">
+      <AnimatePresence mode="popLayout" initial={false}>
+        {visible.map((insight) => (
+          <motion.div
+            key={insight.id}
+            layout
+            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <InsightCard insight={insight} onAction={() => onAction(insight)} />
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 // ── Usage Bar ──────────────────────────────────────────────
 function UsageBar({ value, color }: { value: number; color: string }) {
   const pct = Math.min(value, 100);
@@ -167,6 +295,129 @@ function UsageBar({ value, color }: { value: number; color: string }) {
   );
 }
 
+// ── Chart Drill-down Modal ─────────────────────────────────
+function DrillDownModal({ metric, data, onClose }: {
+  metric: 'cpu' | 'memory';
+  data: HistoryPoint[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const stroke = metric === 'cpu' ? '#22d3ee' : '#a78bfa';
+  const gradId = metric === 'cpu' ? 'drillCpuGrad' : 'drillMemGrad';
+  const label = metric === 'cpu' ? 'CPU %' : 'Memory %';
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      />
+      <motion.div
+        className="glass-card border border-slate-700/80 rounded-xl p-5 w-full max-w-2xl relative shadow-2xl shadow-black/50"
+        initial={{ opacity: 0, scale: 0.92, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.92, y: 10 }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <TrendingUp size={16} className="text-cyan-400" />
+              {label} — 7 Day History
+            </h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Daily averages across the fleet. Click a bar for per-host breakdown.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md text-slate-500 hover:text-slate-200 hover:bg-slate-800/60 transition-colors"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <ResponsiveContainer width="100%" height={260}>
+          <AreaChart data={data} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={stroke} stopOpacity={0.4} />
+                <stop offset="95%" stopColor={stroke} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" />
+            <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} domain={[0, 100]} axisLine={false} tickLine={false} />
+            <Tooltip
+              contentStyle={{ background: 'rgba(30,36,51,0.95)', border: '1px solid #334155', borderRadius: 8, fontSize: 12, backdropFilter: 'blur(12px)' }}
+              cursor={{ stroke: '#334155', strokeDasharray: '3 3' }}
+            />
+            <Area
+              type="monotone"
+              dataKey={metric}
+              stroke={stroke}
+              fill={`url(#${gradId})`}
+              strokeWidth={2.5}
+              name={label}
+              animationDuration={700}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+        <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-800/60">
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">7-Day Avg</p>
+            <p className="text-xl font-bold text-white tabular-nums mt-0.5">
+              {(data.reduce((a, b) => a + b[metric], 0) / data.length).toFixed(1)}%
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Peak</p>
+            <p className="text-xl font-bold text-white tabular-nums mt-0.5">
+              {Math.max(...data.map(d => d[metric])).toFixed(1)}%
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">Low</p>
+            <p className="text-xl font-bold text-white tabular-nums mt-0.5">
+              {Math.min(...data.map(d => d[metric])).toFixed(1)}%
+            </p>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+// ── Sort types ─────────────────────────────────────────────
+type SortKey = 'user' | 'cpu' | 'memory' | 'duration';
+type SortDir = 'asc' | 'desc';
+
+function parseDuration(d: string): number {
+  // "Xh Ym" or "Ym"
+  const hMatch = d.match(/(\d+)h/);
+  const mMatch = d.match(/(\d+)m/);
+  const h = hMatch ? parseInt(hMatch[1], 10) : 0;
+  const m = mMatch ? parseInt(mMatch[1], 10) : 0;
+  return h * 60 + m;
+}
+
 // ── Main App ───────────────────────────────────────────────
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -176,7 +427,15 @@ export default function App() {
   const [servers, setServers] = useState<ServerNode[]>([]);
   const [selectedTab, setSelectedTab] = useState<'all' | 'active' | 'idle' | 'disconnected'>('all');
 
-  // Simulate initial load
+  // Drill-down state
+  const [drillMetric, setDrillMetric] = useState<'cpu' | 'memory' | null>(null);
+  const [drillData, setDrillData] = useState<HistoryPoint[]>([]);
+
+  // Sort + selection
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     const timer = setTimeout(() => {
       const s = generateSessions();
@@ -188,7 +447,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Live metric updates every 5s
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(() => {
@@ -197,7 +455,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loading]);
 
-  // Session refresh every 12s
   useEffect(() => {
     if (loading) return;
     const interval = setInterval(() => {
@@ -240,10 +497,76 @@ export default function App() {
     });
   }, []);
 
-  if (loading) return <DashboardSkeleton />;
+  const openDrill = useCallback((metric: 'cpu' | 'memory') => {
+    setDrillData(generateSevenDayHistory(metric));
+    setDrillMetric(metric);
+  }, []);
+
+  const handleSort = useCallback((key: SortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return key;
+      }
+      setSortDir('asc');
+      return key;
+    });
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback((ids: string[], allSelected: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) ids.forEach((i) => next.delete(i));
+      else ids.forEach((i) => next.add(i));
+      return next;
+    });
+  }, []);
+
+  const bulkAction = useCallback((action: 'disconnect' | 'restart') => {
+    const count = selected.size;
+    toast.success(`${action === 'disconnect' ? 'Disconnected' : 'Restarted'} ${count} session${count === 1 ? '' : 's'}`, {
+      style: {
+        background: 'rgba(30, 36, 51, 0.95)',
+        color: '#e2e8f0',
+        border: '1px solid #334155',
+        backdropFilter: 'blur(12px)',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+      },
+      iconTheme: { primary: '#22d3ee', secondary: '#0b0e14' },
+    });
+    setSelected(new Set());
+  }, [selected]);
 
   const filteredSessions = selectedTab === 'all' ? sessions :
     sessions.filter(s => s.status === selectedTab);
+
+  const sortedSessions = useMemo(() => {
+    if (!sortKey) return filteredSessions;
+    const arr = [...filteredSessions];
+    arr.sort((a, b) => {
+      let av: number | string;
+      let bv: number | string;
+      if (sortKey === 'user') { av = a.user; bv = b.user; }
+      else if (sortKey === 'cpu') { av = a.cpu; bv = b.cpu; }
+      else if (sortKey === 'memory') { av = a.memory; bv = b.memory; }
+      else { av = parseDuration(a.duration); bv = parseDuration(b.duration); }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1;
+      if (av > bv) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return arr;
+  }, [filteredSessions, sortKey, sortDir]);
+
+  if (loading) return <DashboardSkeleton />;
 
   const activeCount = sessions.filter(s => s.status === 'active').length;
   const idleCount = sessions.filter(s => s.status === 'idle').length;
@@ -256,12 +579,60 @@ export default function App() {
 
   const latestMetric = metrics[metrics.length - 1];
 
+  const visibleIds = sortedSessions.map((s) => s.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  const SortIcon = ({ col }: { col: SortKey }) => {
+    if (sortKey !== col) return <ArrowUpDown size={10} className="text-slate-600" />;
+    return sortDir === 'asc'
+      ? <ArrowUp size={10} className="text-cyan-400" />
+      : <ArrowDown size={10} className="text-cyan-400" />;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-mesh text-slate-300 font-sans">
-      <Toaster
-        position="top-right"
-        toastOptions={{ duration: 3000 }}
-      />
+      <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
+
+      {/* Bulk Action Bar */}
+      <AnimatePresence>
+        {selected.size > 0 && (
+          <motion.div
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="sticky top-14 z-40 glass-card border-b border-cyan-500/30 bg-slate-900/90 shadow-lg shadow-cyan-500/5"
+          >
+            <div className="max-w-[1600px] mx-auto px-6 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-cyan-400">
+                  {selected.size} session{selected.size === 1 ? '' : 's'} selected
+                </span>
+                <button
+                  onClick={() => setSelected(new Set())}
+                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => bulkAction('disconnect')}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-red-500/15 text-red-400 hover:bg-red-500/25 transition-all border border-red-500/20"
+                >
+                  <Power size={12} /> Disconnect {selected.size}
+                </button>
+                <button
+                  onClick={() => bulkAction('restart')}
+                  className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-all border border-amber-500/20"
+                >
+                  <RotateCcw size={12} /> Restart {selected.size}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Header ─────────────────────────────────────────── */}
       <header className="header-glass border-b border-slate-800/80 sticky top-0 z-50 shadow-lg shadow-black/20">
@@ -298,25 +669,63 @@ export default function App() {
         <div className="flex-1 min-w-0">
 
           {/* Stat Cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5 stagger-children">
-            <StatCard icon={Users} label="Total Sessions" value={sessions.length} sub={`${activeCount} active`} color="bg-cyan-500/15 text-cyan-400" />
-            <StatCard icon={Cpu} label="Avg CPU" value={`${avgCpu.toFixed(1)}%`} sub="across active hosts" color="bg-violet-500/15 text-violet-400" />
-            <StatCard icon={MemoryStick} label="Avg Memory" value={`${avgMem.toFixed(1)}%`} sub={`${(avgMem * 0.32).toFixed(1)} GB used`} color="bg-amber-500/15 text-amber-400" />
-            <StatCard icon={Activity} label="Network I/O" value={`${latestMetric.network} Mbps`} sub="total throughput" color="bg-emerald-500/15 text-emerald-400" />
-          </div>
+          <motion.div
+            className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            <StatCard icon={Users} label="Total Sessions" numericValue={sessions.length} sub={`${activeCount} active`} color="bg-cyan-500/15 text-cyan-400" />
+            <StatCard icon={Cpu} label="Avg CPU" numericValue={avgCpu} suffix="%" decimals={1} sub="across active hosts" color="bg-violet-500/15 text-violet-400" />
+            <StatCard icon={MemoryStick} label="Avg Memory" numericValue={avgMem} suffix="%" decimals={1} sub={`${(avgMem * 0.32).toFixed(1)} GB used`} color="bg-amber-500/15 text-amber-400" />
+            <StatCard icon={Activity} label="Network I/O" numericValue={latestMetric.network} suffix=" Mbps" sub="total throughput" color="bg-emerald-500/15 text-emerald-400" />
+          </motion.div>
 
           {/* Charts */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-5">
+          <motion.div
+            className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-5"
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+          >
             {/* CPU & Memory Chart */}
-            <div className="glass-card border border-slate-800 rounded-xl p-4 card-glow animate-fade-in-up opacity-0" style={{ animationDelay: '200ms' }}>
+            <motion.div
+              variants={itemVariants}
+              className="glass-card border border-slate-800 rounded-xl p-4 card-glow"
+            >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
                   <TrendingUp size={14} className="text-cyan-400" /> Resource Utilization
                 </h3>
-                <span className="text-[10px] text-slate-500 font-medium">Last 30 min</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-slate-500 font-medium">Last 30 min</span>
+                  <span className="text-[10px] text-cyan-500/80 font-medium">Click to drill down</span>
+                </div>
               </div>
               <ResponsiveContainer width="100%" height={180}>
-                <AreaChart data={metrics} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+                <AreaChart
+                  data={metrics}
+                  margin={{ top: 5, right: 5, bottom: 0, left: -20 }}
+                  onClick={(e: unknown) => {
+                    if (!e || typeof e !== 'object') {
+                      openDrill('cpu');
+                      return;
+                    }
+                    const payload = (e as { activePayload?: Array<{ dataKey?: string; value?: number }> }).activePayload;
+                    if (!payload || payload.length === 0) {
+                      openDrill('cpu');
+                      return;
+                    }
+                    const cpuVal = payload.find((a) => a.dataKey === 'cpu')?.value;
+                    const memVal = payload.find((a) => a.dataKey === 'memory')?.value;
+                    if (typeof cpuVal === 'number' && typeof memVal === 'number') {
+                      openDrill(cpuVal >= memVal ? 'cpu' : 'memory');
+                    } else {
+                      openDrill('cpu');
+                    }
+                  }}
+                  style={{ cursor: 'pointer' }}
+                >
                   <defs>
                     <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.3} />
@@ -339,13 +748,26 @@ export default function App() {
                 </AreaChart>
               </ResponsiveContainer>
               <div className="flex gap-4 mt-2 justify-center">
-                <span className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium"><span className="w-2.5 h-0.5 bg-cyan-400 rounded" /> CPU</span>
-                <span className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium"><span className="w-2.5 h-0.5 bg-violet-400 rounded" /> Memory</span>
+                <button
+                  onClick={() => openDrill('cpu')}
+                  className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium hover:text-cyan-300 transition-colors"
+                >
+                  <span className="w-2.5 h-0.5 bg-cyan-400 rounded" /> CPU
+                </button>
+                <button
+                  onClick={() => openDrill('memory')}
+                  className="flex items-center gap-1.5 text-[10px] text-slate-400 font-medium hover:text-violet-300 transition-colors"
+                >
+                  <span className="w-2.5 h-0.5 bg-violet-400 rounded" /> Memory
+                </button>
               </div>
-            </div>
+            </motion.div>
 
             {/* Sessions Over Time */}
-            <div className="glass-card border border-slate-800 rounded-xl p-4 card-glow animate-fade-in-up opacity-0" style={{ animationDelay: '300ms' }}>
+            <motion.div
+              variants={itemVariants}
+              className="glass-card border border-slate-800 rounded-xl p-4 card-glow"
+            >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
                   <Users size={14} className="text-cyan-400" /> Active Sessions
@@ -364,11 +786,16 @@ export default function App() {
                   <Bar dataKey="sessions" fill="#22d3ee" radius={[3, 3, 0, 0]} name="Sessions" opacity={0.8} animationDuration={800} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
 
           {/* Session Table */}
-          <div className="glass-card border border-slate-800 rounded-xl overflow-hidden card-glow animate-fade-in-up opacity-0" style={{ animationDelay: '400ms' }}>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="glass-card border border-slate-800 rounded-xl overflow-hidden card-glow"
+          >
             {/* Table header with tabs */}
             <div className="px-4 py-3 border-b border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
               <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -384,13 +811,20 @@ export default function App() {
                   <button
                     key={key}
                     onClick={() => setSelectedTab(key)}
-                    className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all duration-200
+                    className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all duration-200 relative
                       ${selectedTab === key
-                        ? 'bg-cyan-500/15 text-cyan-400 shadow-sm shadow-cyan-500/10'
+                        ? 'text-cyan-400'
                         : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/60'
                       }`}
                   >
-                    {label}
+                    {selectedTab === key && (
+                      <motion.span
+                        layoutId="tabPill"
+                        className="absolute inset-0 bg-cyan-500/15 rounded-md shadow-sm shadow-cyan-500/10"
+                        transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                      />
+                    )}
+                    <span className="relative">{label}</span>
                   </button>
                 ))}
               </div>
@@ -401,88 +835,129 @@ export default function App() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800/60">
-                    <th className="px-4 py-2.5 font-semibold">User</th>
+                    <th className="px-4 py-2.5 font-semibold w-8">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={() => toggleSelectAll(visibleIds, allVisibleSelected)}
+                        className="accent-cyan-500 cursor-pointer w-3.5 h-3.5"
+                        aria-label="Select all"
+                      />
+                    </th>
+                    <th className="px-4 py-2.5 font-semibold cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleSort('user')}>
+                      <span className="inline-flex items-center gap-1.5">User <SortIcon col="user" /></span>
+                    </th>
                     <th className="px-4 py-2.5 font-semibold">Host</th>
                     <th className="px-4 py-2.5 font-semibold">Status</th>
-                    <th className="px-4 py-2.5 font-semibold">CPU</th>
-                    <th className="px-4 py-2.5 font-semibold">Memory</th>
-                    <th className="px-4 py-2.5 font-semibold">Duration</th>
+                    <th className="px-4 py-2.5 font-semibold cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleSort('cpu')}>
+                      <span className="inline-flex items-center gap-1.5">CPU <SortIcon col="cpu" /></span>
+                    </th>
+                    <th className="px-4 py-2.5 font-semibold cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleSort('memory')}>
+                      <span className="inline-flex items-center gap-1.5">Memory <SortIcon col="memory" /></span>
+                    </th>
+                    <th className="px-4 py-2.5 font-semibold cursor-pointer select-none hover:text-slate-300 transition-colors" onClick={() => handleSort('duration')}>
+                      <span className="inline-flex items-center gap-1.5">Duration <SortIcon col="duration" /></span>
+                    </th>
                     <th className="px-4 py-2.5 font-semibold">Last Activity</th>
                     <th className="px-4 py-2.5 font-semibold">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSessions.map(session => (
-                    <tr key={session.id} className="border-b border-slate-800/30 session-row">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-7 h-7 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300 shadow-inner">
-                            {session.user.split('.').map(n => n[0].toUpperCase()).join('')}
+                  {sortedSessions.map(session => {
+                    const isSelected = selected.has(session.id);
+                    return (
+                      <motion.tr
+                        key={session.id}
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.2 }}
+                        className={`border-b border-slate-800/30 session-row relative ${isSelected ? 'bg-cyan-500/5' : ''}`}
+                      >
+                        <td className="px-4 py-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(session.id)}
+                            className="accent-cyan-500 cursor-pointer w-3.5 h-3.5"
+                            aria-label={`Select ${session.user}`}
+                          />
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-slate-600 to-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300 shadow-inner">
+                              {session.user.split('.').map(n => n[0].toUpperCase()).join('')}
+                            </div>
+                            <div>
+                              <p className="text-sm text-slate-200 font-medium">{session.user}</p>
+                              <p className="text-[10px] text-slate-500 font-mono">{session.ip}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-sm text-slate-200 font-medium">{session.user}</p>
-                            <p className="text-[10px] text-slate-500 font-mono">{session.ip}</p>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <p className="text-sm text-slate-300 font-medium">{session.hostname}</p>
+                          <p className="text-[10px] text-slate-500">{session.os}</p>
+                        </td>
+                        <td className="px-4 py-2.5"><StatusBadge status={session.status} /></td>
+                        <td className="px-4 py-2.5">
+                          <div className="w-20">
+                            <p className="text-sm text-slate-300 mb-1 font-mono font-medium tabular-nums">{session.cpu}%</p>
+                            <UsageBar value={session.cpu} color={session.cpu > 80 ? 'bg-red-500' : session.cpu > 50 ? 'bg-amber-500' : 'bg-cyan-500'} />
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <p className="text-sm text-slate-300 font-medium">{session.hostname}</p>
-                        <p className="text-[10px] text-slate-500">{session.os}</p>
-                      </td>
-                      <td className="px-4 py-2.5"><StatusBadge status={session.status} /></td>
-                      <td className="px-4 py-2.5">
-                        <div className="w-20">
-                          <p className="text-sm text-slate-300 mb-1 font-mono font-medium">{session.cpu}%</p>
-                          <UsageBar value={session.cpu} color={session.cpu > 80 ? 'bg-red-500' : session.cpu > 50 ? 'bg-amber-500' : 'bg-cyan-500'} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="w-20">
-                          <p className="text-sm text-slate-300 mb-1 font-mono font-medium">{session.memory}%</p>
-                          <UsageBar value={session.memory} color={session.memory > 75 ? 'bg-red-500' : session.memory > 50 ? 'bg-violet-500' : 'bg-cyan-500'} />
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="text-sm text-slate-300 flex items-center gap-1.5 font-medium">
-                          <Clock size={12} className="text-slate-500" /> {session.duration}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-sm text-slate-400">{session.lastActivity}</td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            onClick={() => handleAction('disconnect', session)}
-                            className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-red-500/10"
-                            title="Disconnect session"
-                          >
-                            <Power size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleAction('restart', session)}
-                            className="p-1.5 rounded-md text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-amber-500/10"
-                            title="Restart session"
-                          >
-                            <RotateCcw size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleAction('message', session)}
-                            className="p-1.5 rounded-md text-slate-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-cyan-500/10"
-                            title="Send message"
-                          >
-                            <MessageSquare size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="w-20">
+                            <p className="text-sm text-slate-300 mb-1 font-mono font-medium tabular-nums">{session.memory}%</p>
+                            <UsageBar value={session.memory} color={session.memory > 75 ? 'bg-red-500' : session.memory > 50 ? 'bg-violet-500' : 'bg-cyan-500'} />
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-sm text-slate-300 flex items-center gap-1.5 font-medium">
+                            <Clock size={12} className="text-slate-500" /> {session.duration}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-slate-400">{session.lastActivity}</td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              onClick={() => handleAction('disconnect', session)}
+                              className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-red-500/10"
+                              title="Disconnect session"
+                            >
+                              <Power size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleAction('restart', session)}
+                              className="p-1.5 rounded-md text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-amber-500/10"
+                              title="Restart session"
+                            >
+                              <RotateCcw size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleAction('message', session)}
+                              className="p-1.5 rounded-md text-slate-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-all duration-200 hover:shadow-sm hover:shadow-cyan-500/10"
+                              title="Send message"
+                            >
+                              <MessageSquare size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-          </div>
+          </motion.div>
         </div>
 
         {/* ── Right Sidebar ────────────────────────────────── */}
-        <aside className="w-[320px] shrink-0 hidden xl:block space-y-4 animate-slide-in-right opacity-0">
+        <motion.aside
+          variants={sidebarVariants}
+          initial="hidden"
+          animate="visible"
+          className="w-[320px] shrink-0 hidden xl:block space-y-4"
+        >
 
           {/* AI Insights */}
           <div className="glass-card border border-slate-800 rounded-xl p-4 card-glow">
@@ -495,11 +970,7 @@ export default function App() {
                 {insights.filter(i => i.severity !== 'info').length} alerts
               </span>
             </h3>
-            <div className="space-y-0">
-              {insights.map(insight => (
-                <InsightCard key={insight.id} insight={insight} onAction={() => handleInsightAction(insight)} />
-              ))}
-            </div>
+            <RotatingInsights insights={insights} onAction={handleInsightAction} />
           </div>
 
           {/* Server Fleet */}
@@ -534,8 +1005,19 @@ export default function App() {
               ))}
             </div>
           </div>
-        </aside>
+        </motion.aside>
       </div>
+
+      {/* Drill-down Modal */}
+      <AnimatePresence>
+        {drillMetric && (
+          <DrillDownModal
+            metric={drillMetric}
+            data={drillData}
+            onClose={() => setDrillMetric(null)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Footer */}
       <footer className="border-t border-slate-800/60 mt-auto">
